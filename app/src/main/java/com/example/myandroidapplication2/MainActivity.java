@@ -2,21 +2,27 @@ package com.example.myandroidapplication2;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import android.Manifest;
+import android.content.ContentValues;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.util.Log;
 import android.widget.Toast;
 
 import com.example.myandroidapplication2.databinding.ActivityMainBinding;
 import com.google.common.util.concurrent.ListenableFuture;
 
+import java.text.SimpleDateFormat;
+import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,9 +37,11 @@ public class MainActivity extends AppCompatActivity {
 
     private ActivityMainBinding viewBinding;
     private ExecutorService cameraExecutor;
+    private ImageCapture imageCapture;
     private static final int REQUEST_CODE_PERMISSIONS = 10;
     private static String[] REQUIRED_PERMISSIONS;
     private String TAG = "CameraXApp";
+    private static final String FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS";
 
     static {
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
@@ -87,6 +95,47 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void takePhoto() {
+        // Get a stable reference of the modifiable image capture use case
+        if (imageCapture == null) {
+            return;
+        }
+
+        // Create time stamped name and MediaStore entry.
+        String name = new SimpleDateFormat(FILENAME_FORMAT, Locale.CHINA)
+                .format(System.currentTimeMillis());
+        ContentValues contentValues = new ContentValues();
+        contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+            contentValues.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image");
+        }
+
+        // Create output options object which contains file + metadata
+        ImageCapture.OutputFileOptions outputOptions = new ImageCapture.OutputFileOptions.Builder(
+                getContentResolver(),
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                contentValues
+        ).build();
+
+        // Set up image capture listener, which is triggered after photo has
+        // been taken
+        imageCapture.takePicture(
+                outputOptions,
+                ContextCompat.getMainExecutor(this),
+                new ImageCapture.OnImageSavedCallback() {
+                    @Override
+                    public void onError(ImageCaptureException exc) {
+                        Log.e(TAG, "Photo capture failed: " + exc.getMessage(), exc);
+                    }
+
+                    @Override
+                    public void onImageSaved(ImageCapture.OutputFileResults output) {
+                        String msg = "Photo capture succeeded: " + output.getSavedUri();
+                        Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_SHORT).show();
+                        Log.d(TAG, msg);
+                    }
+                }
+        );
     }
 
     private void captureVideo() {
@@ -116,9 +165,13 @@ public class MainActivity extends AppCompatActivity {
                         e.printStackTrace();
                     }
                     //CameraX Preview 类实现取景器,用户预览他们拍摄的照片
-                    // Preview
+                    // Preview 继承了useCase，也就是说是provider的其中一个功能
                     Preview preview = new Preview.Builder().build();
                     preview.setSurfaceProvider(viewBinding.viewFinder.getSurfaceProvider());
+
+                    //实现了拍照功能
+                    // imageCapture 继承了useCase，也就是说是provider的其中一个功能
+                    imageCapture = new ImageCapture.Builder().build();
 
                     // Select back camera as a default
                     CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
@@ -128,7 +181,7 @@ public class MainActivity extends AppCompatActivity {
                         cameraProvider.unbindAll();
 
                         // Bind use cases to camera
-                        cameraProvider.bindToLifecycle(MainActivity.this, cameraSelector, preview);
+                        cameraProvider.bindToLifecycle(MainActivity.this, cameraSelector, preview, imageCapture);
 
                     } catch (Exception exc) {
                         Log.e(TAG, "Use case binding failed", exc);
