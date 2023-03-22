@@ -2,6 +2,7 @@ package com.example.myandroidapplication2;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageCapture;
 import androidx.camera.core.ImageCaptureException;
 import androidx.camera.core.Preview;
@@ -173,6 +174,12 @@ public class MainActivity extends AppCompatActivity {
                     // imageCapture 继承了useCase，也就是说是provider的其中一个功能
                     imageCapture = new ImageCapture.Builder().build();
 
+                    //实现了每一帧图像分析功能
+                    ImageAnalysis imageAnalyzer = new ImageAnalysis.Builder().build();
+                    imageAnalyzer.setAnalyzer(cameraExecutor, new LuminosityAnalyzer(luma -> {
+                        Log.d(TAG, "Average luminosity: " + luma);
+                    }));
+
                     // Select back camera as a default
                     CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
 
@@ -181,7 +188,7 @@ public class MainActivity extends AppCompatActivity {
                         cameraProvider.unbindAll();
 
                         // Bind use cases to camera
-                        cameraProvider.bindToLifecycle(MainActivity.this, cameraSelector, preview, imageCapture);
+                        cameraProvider.bindToLifecycle(MainActivity.this, cameraSelector, preview, imageCapture,imageAnalyzer);
 
                     } catch (Exception exc) {
                         Log.e(TAG, "Use case binding failed", exc);
