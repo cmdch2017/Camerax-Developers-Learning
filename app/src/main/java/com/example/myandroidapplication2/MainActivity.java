@@ -2,15 +2,22 @@ package com.example.myandroidapplication2;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
-import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageCapture;
 import androidx.camera.core.ImageCaptureException;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.video.MediaStoreOutputOptions;
+import androidx.camera.video.Quality;
+import androidx.camera.video.QualitySelector;
+import androidx.camera.video.Recorder;
+import androidx.camera.video.Recording;
+import androidx.camera.video.VideoRecordEvent;
+import androidx.camera.video.VideoCapture;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.content.ContentValues;
 import android.content.pm.PackageManager;
 import android.os.Build;
@@ -39,9 +46,11 @@ public class MainActivity extends AppCompatActivity {
     private ActivityMainBinding viewBinding;
     private ExecutorService cameraExecutor;
     private ImageCapture imageCapture;
+    private VideoCapture<Recorder> videoCapture;
     private static final int REQUEST_CODE_PERMISSIONS = 10;
     private static String[] REQUIRED_PERMISSIONS;
-    private String TAG = "CameraXApp";
+    private static String TAG = "CameraXApp";
+    private Recording recording;
     private static final String FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS";
 
     static {
@@ -139,9 +148,77 @@ public class MainActivity extends AppCompatActivity {
         );
     }
 
+    // Implements VideoCapture use case, including start and stop capturing.
     private void captureVideo() {
+        if (videoCapture == null) {
+            return;
+        }
+
+        viewBinding.videoCaptureButton.setEnabled(false);
+
+        Recording curRecording = recording;
+        if (curRecording != null) {
+            // Stop the current recording session.
+            curRecording.stop();
+            recording = null;
+            return;
+        }
+
+        // create and start a new recording session
+        String name = new SimpleDateFormat(FILENAME_FORMAT, Locale.US)
+                .format(System.currentTimeMillis());
+        ContentValues contentValues = new ContentValues();
+        contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+        contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+            contentValues.put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/CameraX-Video");
+        }
+
+        MediaStoreOutputOptions mediaStoreOutputOptions = new MediaStoreOutputOptions
+                .Builder(getContentResolver(), MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                .setContentValues(contentValues)
+                .build();
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            // TODO: Consider calling
+            //    ActivityCompat#requestPermissions
+            // here to request the missing permissions, and then overriding
+            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+            //                                          int[] grantResults)
+            // to handle the case where the user grants the permission. See the documentation
+            // for ActivityCompat#requestPermissions for more details.
+            return;
+        }
+        recording = videoCapture.getOutput()
+                .prepareRecording(this, mediaStoreOutputOptions)
+                //在此录音中启用音频
+                .withAudioEnabled()
+                .start(ContextCompat.getMainExecutor(this), recordEvent -> {
+                    if (recordEvent instanceof VideoRecordEvent.Start) {
+                        viewBinding.videoCaptureButton.setText(getString(R.string.stop_capture));
+                        viewBinding.videoCaptureButton.setEnabled(true);
+                    } else if (recordEvent instanceof VideoRecordEvent.Finalize) {
+                        VideoRecordEvent.Finalize finalize = (VideoRecordEvent.Finalize) recordEvent;
+                        if (!finalize.hasError()) {
+                            String msg = "Video capture succeeded: " + finalize.getOutputResults().getOutputUri();
+                            Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_SHORT)
+                                    .show();
+                            Log.d(TAG, msg);
+                        } else {
+                            recording.close();
+                            recording = null;
+                            Log.e(TAG, "Video capture ends with error: " +
+                                    finalize.getError());
+                        }
+                        viewBinding.videoCaptureButton.setText(getString(R.string.start_capture));
+                        viewBinding.videoCaptureButton.setEnabled(true);
+                    }
+                });
+
     }
 
+
+    @SuppressLint("RestrictedApi")
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
 
@@ -170,15 +247,22 @@ public class MainActivity extends AppCompatActivity {
                     Preview preview = new Preview.Builder().build();
                     preview.setSurfaceProvider(viewBinding.viewFinder.getSurfaceProvider());
 
-                    //实现了拍照功能
-                    // imageCapture 继承了useCase，也就是说是provider的其中一个功能
-                    imageCapture = new ImageCapture.Builder().build();
+                    //实现了录像功能
+                    Recorder recorder = new Recorder.Builder()
+                            .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
+                            .build();
 
-                    //实现了每一帧图像分析功能
-                    ImageAnalysis imageAnalyzer = new ImageAnalysis.Builder().build();
-                    imageAnalyzer.setAnalyzer(cameraExecutor, new LuminosityAnalyzer(luma -> {
-                        Log.d(TAG, "Average luminosity: " + luma);
-                    }));
+                    videoCapture = VideoCapture.withOutput(recorder);
+
+//                    //实现了拍照功能
+//                    // imageCapture 继承了useCase，也就是说是provider的其中一个功能
+//                    imageCapture = new ImageCapture.Builder().build();
+//
+//                    //实现了每一帧图像分析功能
+//                    ImageAnalysis imageAnalyzer = new ImageAnalysis.Builder().build();
+//                    imageAnalyzer.setAnalyzer(cameraExecutor, new LuminosityAnalyzer(luma -> {
+//                        Log.d(TAG, "Average luminosity: " + luma);
+//                    }));
 
                     // Select back camera as a default
                     CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
@@ -188,7 +272,7 @@ public class MainActivity extends AppCompatActivity {
                         cameraProvider.unbindAll();
 
                         // Bind use cases to camera
-                        cameraProvider.bindToLifecycle(MainActivity.this, cameraSelector, preview, imageCapture,imageAnalyzer);
+                        cameraProvider.bindToLifecycle(MainActivity.this, cameraSelector, preview, videoCapture);
 
                     } catch (Exception exc) {
                         Log.e(TAG, "Use case binding failed", exc);
